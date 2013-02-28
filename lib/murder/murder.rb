@@ -26,16 +26,22 @@ namespace :murder do
     end
 
     if ENV['path_is_file']
-      run "cp \"#{seeder_files_path}\" #{filename}"
+      if !ENV['files_path']
+        puts "You must specify a 'files_path' if you specify 'path_is_file'"
+        exit(1)
+      end
+
+      seeding_path = ENV['files_path']
     else
       run "tar -c -z -C #{seeder_files_path}/ -f #{filename} --exclude \".git*\" ."
+      seeding_path = filename
     end
 
     tracker = find_servers(:roles => :tracker).first
     tracker_host = tracker.host
     tracker_port = variables[:tracker_port] || '8998'
 
-    run "python #{remote_murder_path}/murder_make_torrent.py '#{filename}' #{tracker_host}:#{tracker_port} '#{filename}.torrent'"
+    run "python #{remote_murder_path}/murder_make_torrent.py '#{seeding_path}' #{tracker_host}:#{tracker_port} '#{filename}.torrent'"
 
     download_torrent unless ENV['do_not_download_torrent']
   end
@@ -53,7 +59,18 @@ namespace :murder do
   DESC
   task :start_seeding, :roles => :seeder do
     require_tag
-    run "SCREENRC=/dev/null SYSSCREENRC=/dev/null screen -dms 'seeder-#{tag}' python #{remote_murder_path}/murder_client.py seeder '#{filename}.torrent' '#{filename}' `LC_ALL=C host $HOSTNAME | awk '/has address/ {print $4}' | head -n 1`"
+    if ENV['path_is_file']
+      if !ENV['files_path']
+        puts "You must specify a 'files_path' if you specify 'path_is_file'"
+        exit(1)
+      end
+
+      seeding_path = ENV['files_path']      
+    else
+      seeding_path = filename
+    end
+
+    run "SCREENRC=/dev/null SYSSCREENRC=/dev/null screen -dms 'seeder-#{tag}' python #{remote_murder_path}/murder_client.py seeder '#{filename}.torrent' '#{seeding_path}' `LC_ALL=C host $HOSTNAME | awk '/has address/ {print $4}' | head -n 1`"
   end
 
   desc <<-DESC
@@ -91,11 +108,15 @@ namespace :murder do
     end
 
     upload("#{filename}.torrent", "#{filename}.torrent", :via => :scp)
-    run "python #{remote_murder_path}/murder_client.py peer '#{filename}.torrent' '#{filename}' `LC_ALL=C host $CAPISTRANO:HOST$ | awk '/has address/ {print $4}' | head -n 1`"
-
     if ENV['path_is_file']
-      run "cp #{filename} #{destination_path}"
+      download_path = destination_path + '/' + File.basename(filename)
     else
+      download_path = filename
+    end
+
+    run "python #{remote_murder_path}/murder_client.py peer '#{filename}.torrent' '#{download_path}' `LC_ALL=C host $CAPISTRANO:HOST$ | awk '/has address/ {print $4}' | head -n 1`"
+
+    if !ENV['path_is_file']
       run "tar xf #{filename} -C #{destination_path}"
     end
   end
